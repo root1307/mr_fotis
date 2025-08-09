@@ -5,22 +5,6 @@
 SmartShell AI is an intelligent terminal assistant that understands natural-language Greek or English instructions and translates them into bash (or PowerShell on Windows) commands. The program runs offline using a local language model and will automatically install missing dependencies (llama_cpp and diskcache) when you run it. To use a custom model, place the .gguf file in a folder named "models" next to this script or the packaged AppImage. On Linux you can run the AppImage directly; on Linux/Windows you can run this script in a virtual environment via python smartshell.py.
 """
 
-import subprocess
-import sys
-
-
-def _ensure_dependencies(packages):
-    """Ensure that required Python packages are installed. Uses pip to install missing packages automatically."""
-    for pkg in packages:
-        try:
-            __import__(pkg)
-        except ModuleNotFoundError:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "--break-system-packages", pkg])
-
-
-# Ensure llama_cpp and diskcache are installed before the rest of the script imports them.
-_ensure_dependencies(["llama_cpp", "diskcache"])
-
 import os
 import sys
 import json
@@ -36,6 +20,40 @@ from pathlib import Path
 
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
+
+
+# ===================== Dependencies bootstrap =====================
+
+def _pip_install(pkg: str):
+    # Try with --break-system-packages (Ubuntu 23.04+), else fallback
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet",
+                               "--break-system-packages", pkg])
+    except subprocess.CalledProcessError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", pkg])
+
+
+def _ensure_dependencies(packages):
+    """Ensure that required Python packages are installed. Uses pip to install missing packages automatically."""
+    for pkg in packages:
+        try:
+            __import__(pkg)
+        except ModuleNotFoundError:
+            _pip_install(pkg)
+
+
+# Ensure llama_cpp and diskcache are installed before the rest of the script imports them.
+_ensure_dependencies(["llama_cpp", "diskcache"])
+
+# After ensuring installation, import llama_cpp (may still fail at runtime if lib missing)
+LLAMA_AVAILABLE = False
+try:
+    from llama_cpp import Llama  # type: ignore
+    LLAMA_AVAILABLE = True
+except Exception:
+    Llama = None  # type: ignore
+    LLAMA_AVAILABLE = False
+
 
 # ===================== Paths & Settings =====================
 
@@ -81,7 +99,6 @@ class Settings:
 SETTINGS = Settings()
 
 # URL from which to download the default model automatically.
-# The first time the program runs it will download the .gguf model here if it is missing.
 MODEL_URL = (
     "https://huggingface.co/TheBloke/WizardCoder-Python-7B-V1.0-GGUF/"
     "resolve/main/wizardcoder-python-7b-v1.0.Q4_K_M.gguf"
@@ -116,16 +133,7 @@ def wire_llama_lib():
 wire_llama_lib()
 
 
-LLAMA_AVAILABLE = False
-try:
-    from llama_cpp import Llama  # type: ignore
-    LLAMA_AVAILABLE = True
-except Exception:
-    Llama = None  # type: ignore
-    LLAMA_AVAILABLE = False
-
-
-# ===================== Model paths =====================
+# ===================== Model paths & downloading =====================
 
 def models_dir() -> Path:
     d = app_dir() / "models"
@@ -139,17 +147,15 @@ def models_dir() -> Path:
 def model_path() -> Path:
     return models_dir() / SETTINGS.model_name
 
-# -------------------- Model downloading --------------------
+
 def download_model() -> bool:
     """
     Download the GGUF model file if it does not already exist.
 
-    Returns True on success, False on failure. Uses urllib to avoid adding extra
-    dependencies. Shows an error dialog if the download fails.
+    Returns True on success, False on failure. Uses urllib to avoid extra deps.
     """
     dest = model_path()
     try:
-        # Ensure destination directory exists
         dest.parent.mkdir(parents=True, exist_ok=True)
         import urllib.request
 
@@ -179,30 +185,24 @@ def download_model() -> bool:
 
 _LLM = None
 _LLM_LOCK = threading.Lock()
+TRANSLATE_MODE = "rule"  # "llm" or "rule"
+
+def _current_os_hint() -> str:
+    if SETTINGS.os_hint:
+        return SETTINGS.os_hint
+    return "windows" if os.name == "nt" else "linux"
 
 SYSTEM_PROMPT = (
-    "Act as a bash terminal assistant. Detect the user's OS and output a single-line command "
-    "ONLY, with no extra text. Prefer safe flags. If OS is Windows, output a PowerShell command.
-
-"
-    "Examples:
-"
-    "User: update the system
-Command: sudo apt update && sudo apt upgrade -y
-
-"
-    "User: install vlc
-Command: sudo apt install -y vlc
-
-"
-    "User: check my IP address
-Command: ip a
-
-"
-    "User: list current directory
-Command: ls -la
-
-"
+    "You are SmartShell, a terminal assistant. Output ONLY a single-line command suitable for the user's OS.\n"
+    "Rules:\n"
+    "- No explanations, no backticks, no comments.\n"
+    "- Prefer safe flags. If OS is Windows, output a PowerShell command. Otherwise, bash.\n"
+    f"- Current OS hint: {_current_os_hint()}.\n\n"
+    "Examples:\n"
+    "User: update the system\nCommand: sudo apt update && sudo apt upgrade -y\n"
+    "User: install vlc\nCommand: sudo apt install -y vlc\n"
+    "User: check my IP address\nCommand: ip a\n"
+    "User: list current directory\nCommand: ls -la\n"
 )
 
 
@@ -214,46 +214,58 @@ def ensure_model_loaded():
         if _LLM is None:
             p = model_path()
             if not p.exists():
-                raise FileNotFoundError(
-                    f"Model missing: {p}
-Place the .gguf model in a 'models' folder next to this script or AppImage."
-                )
+                # Try to download automatically
+                ok = download_model()
+                if not ok or not p.exists():
+                    raise FileNotFoundError(
+                        f"Model missing and download failed: {p}\n"
+                        f"Place the .gguf model in '{models_dir()}' or check internet connection."
+                    )
             _LLM = Llama(model_path=str(p), n_ctx=SETTINGS.ctx)
 
 
-def llm_translate(prompt: str) -> str:
+def llm_translate(user_prompt: str) -> str:
+    global TRANSLATE_MODE
     ensure_model_loaded()
     assert _LLM is not None
-    text = SYSTEM_PROMPT + f"User: {prompt}
-Command:"
+    text = f"{SYSTEM_PROMPT}\nUser: {user_prompt}\nCommand:"
     out = _LLM(
-        text,
+        prompt=text,
         max_tokens=120,
-        stop=["
-", "</s>", "User:", "Command:"],
+        stop=["\n", "</s>", "User:", "Command:"],
         temperature=0.2,
         top_p=0.95,
     )
     cmd = (out.get("choices", [{}])[0].get("text") or "").strip()
+    # Keep only the first line to enforce single-line command
+    cmd = cmd.splitlines()[0].strip()
     if cmd.startswith("`") and cmd.endswith("`"):
         cmd = cmd[1:-1].strip()
+    TRANSLATE_MODE = "llm"
     return cmd
 
 
 def rule_based_translate(prompt: str) -> str:
+    global TRANSLATE_MODE
     low = prompt.strip().lower()
     rules = {
         "κάνε update": "sudo apt update && sudo apt upgrade -y",
+        "κανε update": "sudo apt update && sudo apt upgrade -y",
         "άδειασε την cache": "sudo apt clean",
+        "αδειασε την cache": "sudo apt clean",
         "ip": "ip a",
         "upgrade": "sudo apt update && sudo apt upgrade -y",
         "install vlc": "sudo apt install -y vlc",
         "list files": "ls -la",
         "ping google": "ping -c 4 google.com",
+        "check my ip": "ip a",
+        "my ip": "ip a",
     }
     for k, v in rules.items():
         if k in low:
+            TRANSLATE_MODE = "rule"
             return v
+    TRANSLATE_MODE = "rule"
     return "echo 'No known mapping; please refine your request.'"
 
 
@@ -271,7 +283,6 @@ def translate(prompt: str) -> str:
 
 # ===================== Command execution (threaded) =====================
 
-
 class Runner:
     def __init__(self, timeout_sec: int = 600, use_shell: bool = True):
         self.timeout = timeout_sec
@@ -288,10 +299,7 @@ class Runner:
         self._cancel.set()
         if self.proc and self.proc.poll() is None:
             try:
-                if os.name == "nt":
-                    self.proc.terminate()
-                else:
-                    self.proc.terminate()
+                self.proc.terminate()
                 time.sleep(0.7)
                 if self.proc.poll() is None:
                     self.proc.kill()
@@ -317,23 +325,17 @@ class Runner:
                     break
                 self.output_q.put(line)
                 if (time.time() - start) > self.timeout:
-                    self.output_q.put("
-[!] Timeout reached. Terminating...
-")
+                    self.output_q.put("\n[!] Timeout reached. Terminating...\n")
                     self.cancel()
                     break
             code = self.proc.wait(timeout=5)
             on_done(code)
         except subprocess.TimeoutExpired:
-            self.output_q.put("
-[!] Process hang; killed.
-")
+            self.output_q.put("\n[!] Process hang; killed.\n")
             self.cancel()
             on_done(-1)
         except Exception as e:
-            self.output_q.put(f"
-[!] Error: {e}
-")
+            self.output_q.put(f"\n[!] Error: {e}\n")
             on_done(-2)
 
 
@@ -342,12 +344,10 @@ class Runner:
 def log_entry(entry: dict):
     path = user_logs_dir() / f"history_{dt.date.today().isoformat()}.jsonl"
     with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "
-")
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 # ===================== GUI =====================
-
 
 class SmartShellGUI:
     def __init__(self, root: tk.Tk):
@@ -410,33 +410,28 @@ class SmartShellGUI:
             messagebox.showwarning("SmartShell", "Please enter a prompt.")
             return
 
-        self.append(f"
-💬 Prompt: {prompt}
-")
+        self.append(f"\n💬 Prompt: {prompt}\n")
         self.set_status("Translating…")
 
         try:
             cmd = translate(prompt)
         except Exception as e:
-            self.append(f"❌ Translate failed: {e}
-")
+            self.append(f"❌ Translate failed: {e}\n")
             self.set_status("Translate failed.")
             return
 
         if not cmd:
-            self.append("❌ Empty command.
-")
+            self.append("❌ Empty command.\n")
             self.set_status("Empty command.")
             return
 
-        self.append(f"💡 Command: {cmd}
-")
-        ok = messagebox.askyesno("SmartShell", f"Run this?
+        # Show which mode was used (LLM or rule-based)
+        self.append(f"🧠 Mode: {'LLM' if TRANSLATE_MODE=='llm' else 'Rule-based'}\n")
+        self.append(f"💡 Command: {cmd}\n")
 
-{cmd}")
+        ok = messagebox.askyesno("SmartShell", f"Run this?\n\n{cmd}")
         if not ok:
-            self.append("❌ Cancelled by user.
-")
+            self.append("❌ Cancelled by user.\n")
             self.set_status("Cancelled.")
             return
 
@@ -455,15 +450,14 @@ class SmartShellGUI:
                 "prompt": prompt,
                 "command": cmd,
                 "exit_code": code,
+                "mode": TRANSLATE_MODE,
             })
 
         self.runner.run_async(cmd, on_done)
 
     def on_cancel(self):
         self.runner.cancel()
-        self.append("
-[⛔] Cancel requested by user.
-")
+        self.append("\n[⛔] Cancel requested by user.\n")
         self.set_status("Cancelling…")
 
     # ---------- Output polling ----------
@@ -478,7 +472,6 @@ class SmartShellGUI:
 
 
 # ===================== Main =====================
-
 
 def main():
     root = tk.Tk()
