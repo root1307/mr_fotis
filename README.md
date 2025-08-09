@@ -13,6 +13,10 @@ SmartShell AI is an intelligent terminal assistant that understands natural lang
 
 ## Running from source on Linux or Windows
 0. download the model run the.sh file!!!!
+```bash
+chmod+x download model.sh
+./download model.sh
+```
 1. Clone this repository:
    ```bash
    git clone https://github.com/root1307/mr_fotis.git
