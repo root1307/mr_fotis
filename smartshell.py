@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-SmartShell AI is an intelligent terminal assistant that understands natural-language Greek or English instructions and translates them into bash (or PowerShell on Windows) commands. The program runs offline using a local language model and will automatically install missing dependencies (llama_cpp and diskcache) when you run it. To use a custom model, place the .gguf file in a folder named "models" next to this script or the packaged AppImage. On Linux you can run the AppImage directly; on Linux/Windows you can run this script in a virtual environment via python smartshell.py.
-"""
-
 import os
 import sys
 import json
@@ -21,11 +14,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
 
-
-# ===================== Dependencies bootstrap =====================
-
 def _pip_install(pkg: str):
-    # Try with --break-system-packages (Ubuntu 23.04+), else fallback
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet",
                                "--break-system-packages", pkg])
@@ -42,20 +31,20 @@ def _ensure_dependencies(packages):
             _pip_install(pkg)
 
 
-# Ensure llama_cpp and diskcache are installed before the rest of the script imports them.
+
 _ensure_dependencies(["llama_cpp", "diskcache"])
 
-# After ensuring installation, import llama_cpp (may still fail at runtime if lib missing)
+
 LLAMA_AVAILABLE = False
 try:
-    from llama_cpp import Llama  # type: ignore
+    from llama_cpp import Llama 
     LLAMA_AVAILABLE = True
 except Exception:
-    Llama = None  # type: ignore
+    Llama = None  
     LLAMA_AVAILABLE = False
 
 
-# ===================== Paths & Settings =====================
+
 
 def is_frozen() -> bool:
     return getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
@@ -91,21 +80,21 @@ def user_logs_dir() -> Path:
 class Settings:
     model_name: str = "wizardcoder-python-7b-v1.0.Q4_K_M.gguf"
     ctx: int = 2048
-    timeout_sec: int = 600  # maximum command execution time
-    use_shell: bool = True  # shell=True allows pipelines
-    os_hint: str = ""       # "linux" / "windows" / "" for auto
+    timeout_sec: int = 600  
+    use_shell: bool = True 
+    os_hint: str = ""       
 
 
 SETTINGS = Settings()
 
-# URL from which to download the default model automatically.
+
 MODEL_URL = (
     "https://huggingface.co/TheBloke/WizardCoder-Python-7B-V1.0-GGUF/"
     "resolve/main/wizardcoder-python-7b-v1.0.Q4_K_M.gguf"
 )
 
 
-# ===================== Llama wiring (optional) =====================
+
 
 def wire_llama_lib():
     """Discover the llama-cpp shared library so the import doesn't crash. It's ok if this fails; we have fallback rules."""
@@ -133,7 +122,7 @@ def wire_llama_lib():
 wire_llama_lib()
 
 
-# ===================== Model paths & downloading =====================
+
 
 def models_dir() -> Path:
     d = app_dir() / "models"
@@ -181,11 +170,11 @@ def download_model() -> bool:
         return False
 
 
-# ===================== LLM translate =====================
+
 
 _LLM = None
 _LLM_LOCK = threading.Lock()
-TRANSLATE_MODE = "rule"  # "llm" or "rule"
+TRANSLATE_MODE = "rule"  
 
 def _current_os_hint() -> str:
     if SETTINGS.os_hint:
@@ -214,7 +203,7 @@ def ensure_model_loaded():
         if _LLM is None:
             p = model_path()
             if not p.exists():
-                # Try to download automatically
+
                 ok = download_model()
                 if not ok or not p.exists():
                     raise FileNotFoundError(
@@ -237,7 +226,7 @@ def llm_translate(user_prompt: str) -> str:
         top_p=0.95,
     )
     cmd = (out.get("choices", [{}])[0].get("text") or "").strip()
-    # Keep only the first line to enforce single-line command
+
     cmd = cmd.splitlines()[0].strip()
     if cmd.startswith("`") and cmd.endswith("`"):
         cmd = cmd[1:-1].strip()
@@ -281,7 +270,8 @@ def translate(prompt: str) -> str:
         return rule_based_translate(prompt)
 
 
-# ===================== Command execution (threaded) =====================
+
+
 
 class Runner:
     def __init__(self, timeout_sec: int = 600, use_shell: bool = True):
@@ -339,7 +329,7 @@ class Runner:
             on_done(-2)
 
 
-# ===================== Logging =====================
+
 
 def log_entry(entry: dict):
     path = user_logs_dir() / f"history_{dt.date.today().isoformat()}.jsonl"
@@ -347,7 +337,7 @@ def log_entry(entry: dict):
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-# ===================== GUI =====================
+
 
 class SmartShellGUI:
     def __init__(self, root: tk.Tk):
@@ -395,7 +385,7 @@ class SmartShellGUI:
         self.runner = Runner(timeout_sec=SETTINGS.timeout_sec, use_shell=SETTINGS.use_shell)
         self._poll_output()
 
-    # ---------- UI helpers ----------
+
     def append(self, text: str):
         self.out.insert(tk.END, text)
         self.out.see(tk.END)
@@ -403,7 +393,7 @@ class SmartShellGUI:
     def set_status(self, msg: str):
         self.status.config(text=msg)
 
-    # ---------- Actions ----------
+
     def on_translate(self):
         prompt = self.entry.get().strip()
         if not prompt:
@@ -425,7 +415,7 @@ class SmartShellGUI:
             self.set_status("Empty command.")
             return
 
-        # Show which mode was used (LLM or rule-based)
+
         self.append(f"🧠 Mode: {'LLM' if TRANSLATE_MODE=='llm' else 'Rule-based'}\n")
         self.append(f"💡 Command: {cmd}\n")
 
@@ -460,7 +450,7 @@ class SmartShellGUI:
         self.append("\n[⛔] Cancel requested by user.\n")
         self.set_status("Cancelling…")
 
-    # ---------- Output polling ----------
+
     def _poll_output(self):
         try:
             while True:
@@ -471,7 +461,7 @@ class SmartShellGUI:
         self.root.after(60, self._poll_output)
 
 
-# ===================== Main =====================
+
 
 def main():
     root = tk.Tk()
