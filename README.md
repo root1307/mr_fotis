@@ -23,6 +23,7 @@ SmartShell AI is an intelligent terminal assistant that understands natural lang
 3. On first run, SmartShell AI will automatically download the `wizardcoder-python-7b-v1.0.Q4_K_M.gguf` model if it is not found (internet connection required). Alternatively, you can place your model file inside a folder named `models` next to the AppImage or in `~/.config/SmartShellAI/models/` to avoid downloading.
 
 ## Running from source on Linux or Windows
+0. download the model run the.sh file!!!!
 1. Clone this repository:
    ```bash
    git clone https://github.com/root1307/mr_fotis.git
