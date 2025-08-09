@@ -80,6 +80,13 @@ class Settings:
 
 SETTINGS = Settings()
 
+# URL from which to download the default model automatically.
+# The first time the program runs it will download the .gguf model here if it is missing.
+MODEL_URL = (
+    "https://huggingface.co/TheBloke/WizardCoder-Python-7B-V1.0-GGUF/"
+    "resolve/main/wizardcoder-python-7b-v1.0.Q4_K_M.gguf"
+)
+
 
 # ===================== Llama wiring (optional) =====================
 
@@ -132,7 +139,40 @@ def models_dir() -> Path:
 def model_path() -> Path:
     return models_dir() / SETTINGS.model_name
 
-_name
+# -------------------- Model downloading --------------------
+def download_model() -> bool:
+    """
+    Download the GGUF model file if it does not already exist.
+
+    Returns True on success, False on failure. Uses urllib to avoid adding extra
+    dependencies. Shows an error dialog if the download fails.
+    """
+    dest = model_path()
+    try:
+        # Ensure destination directory exists
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        import urllib.request
+
+        with urllib.request.urlopen(MODEL_URL) as response, open(dest, "wb") as out_file:
+            total_size = int(response.getheader("Content-Length", 0) or 0)
+            downloaded = 0
+            chunk_size = 8192
+            while True:
+                chunk = response.read(chunk_size)
+                if not chunk:
+                    break
+                out_file.write(chunk)
+                downloaded += len(chunk)
+        return True
+    except Exception as ex:
+        try:
+            messagebox.showerror(
+                "SmartShell AI",
+                f"Failed to download model from {MODEL_URL}:\n{ex}",
+            )
+        except Exception:
+            pass
+        return False
 
 
 # ===================== LLM translate =====================
@@ -142,12 +182,27 @@ _LLM_LOCK = threading.Lock()
 
 SYSTEM_PROMPT = (
     "Act as a bash terminal assistant. Detect the user's OS and output a single-line command "
-    "ONLY, with no extra text. Prefer safe flags. If OS is Windows, output a PowerShell command.\n\n"
-    "Examples:\n"
-    "User: update the system\nCommand: sudo apt update && sudo apt upgrade -y\n\n"
-    "User: install vlc\nCommand: sudo apt install -y vlc\n\n"
-    "User: check my IP address\nCommand: ip a\n\n"
-    "User: list current directory\nCommand: ls -la\n\n"
+    "ONLY, with no extra text. Prefer safe flags. If OS is Windows, output a PowerShell command.
+
+"
+    "Examples:
+"
+    "User: update the system
+Command: sudo apt update && sudo apt upgrade -y
+
+"
+    "User: install vlc
+Command: sudo apt install -y vlc
+
+"
+    "User: check my IP address
+Command: ip a
+
+"
+    "User: list current directory
+Command: ls -la
+
+"
 )
 
 
@@ -160,7 +215,8 @@ def ensure_model_loaded():
             p = model_path()
             if not p.exists():
                 raise FileNotFoundError(
-                    f"Model missing: {p}\nPlace the .gguf model in a 'models' folder next to this script or AppImage."
+                    f"Model missing: {p}
+Place the .gguf model in a 'models' folder next to this script or AppImage."
                 )
             _LLM = Llama(model_path=str(p), n_ctx=SETTINGS.ctx)
 
@@ -168,11 +224,13 @@ def ensure_model_loaded():
 def llm_translate(prompt: str) -> str:
     ensure_model_loaded()
     assert _LLM is not None
-    text = SYSTEM_PROMPT + f"User: {prompt}\nCommand:"
+    text = SYSTEM_PROMPT + f"User: {prompt}
+Command:"
     out = _LLM(
         text,
         max_tokens=120,
-        stop=["\n", "</s>", "User:", "Command:"],
+        stop=["
+", "</s>", "User:", "Command:"],
         temperature=0.2,
         top_p=0.95,
     )
@@ -259,27 +317,33 @@ class Runner:
                     break
                 self.output_q.put(line)
                 if (time.time() - start) > self.timeout:
-                    self.output_q.put("\n[!] Timeout reached. Terminating...\n")
+                    self.output_q.put("
+[!] Timeout reached. Terminating...
+")
                     self.cancel()
                     break
             code = self.proc.wait(timeout=5)
             on_done(code)
         except subprocess.TimeoutExpired:
-            self.output_q.put("\n[!] Process hang; killed.\n")
+            self.output_q.put("
+[!] Process hang; killed.
+")
             self.cancel()
             on_done(-1)
         except Exception as e:
-            self.output_q.put(f"\n[!] Error: {e}\n")
+            self.output_q.put(f"
+[!] Error: {e}
+")
             on_done(-2)
 
 
 # ===================== Logging =====================
 
-
 def log_entry(entry: dict):
     path = user_logs_dir() / f"history_{dt.date.today().isoformat()}.jsonl"
     with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        f.write(json.dumps(entry, ensure_ascii=False) + "
+")
 
 
 # ===================== GUI =====================
@@ -346,25 +410,33 @@ class SmartShellGUI:
             messagebox.showwarning("SmartShell", "Please enter a prompt.")
             return
 
-        self.append(f"\n💬 Prompt: {prompt}\n")
+        self.append(f"
+💬 Prompt: {prompt}
+")
         self.set_status("Translating…")
 
         try:
             cmd = translate(prompt)
         except Exception as e:
-            self.append(f"❌ Translate failed: {e}\n")
+            self.append(f"❌ Translate failed: {e}
+")
             self.set_status("Translate failed.")
             return
 
         if not cmd:
-            self.append("❌ Empty command.\n")
+            self.append("❌ Empty command.
+")
             self.set_status("Empty command.")
             return
 
-        self.append(f"💡 Command: {cmd}\n")
-        ok = messagebox.askyesno("SmartShell", f"Run this?\n\n{cmd}")
+        self.append(f"💡 Command: {cmd}
+")
+        ok = messagebox.askyesno("SmartShell", f"Run this?
+
+{cmd}")
         if not ok:
-            self.append("❌ Cancelled by user.\n")
+            self.append("❌ Cancelled by user.
+")
             self.set_status("Cancelled.")
             return
 
@@ -389,7 +461,9 @@ class SmartShellGUI:
 
     def on_cancel(self):
         self.runner.cancel()
-        self.append("\n[⛔] Cancel requested by user.\n")
+        self.append("
+[⛔] Cancel requested by user.
+")
         self.set_status("Cancelling…")
 
     # ---------- Output polling ----------
