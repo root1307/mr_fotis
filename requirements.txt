@@ -1,0 +1,2 @@
+llama_cpp>=0.2.20
+diskcache>=5.0
