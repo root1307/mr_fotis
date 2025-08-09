@@ -11,17 +11,6 @@ SmartShell AI is an intelligent terminal assistant that understands natural lang
 - Works offline after the initial download.
 - Voice command and hands‑free operation support (coming soon).
 
-## Running on Linux (AppImage)
-1. Download the AppImage from the releases page and make it executable:
-   ```bash
-   chmod +x model_fotis.AppImage
-   ```
-2. Run the AppImage:
-   ```bash
-   ./model_fotis.AppImage
-   ```
-3. On first run, SmartShell AI will automatically download the `wizardcoder-python-7b-v1.0.Q4_K_M.gguf` model if it is not found (internet connection required). Alternatively, you can place your model file inside a folder named `models` next to the AppImage or in `~/.config/SmartShellAI/models/` to avoid downloading.
-
 ## Running from source on Linux or Windows
 0. download the model run the.sh file!!!!
 1. Clone this repository:
