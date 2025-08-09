@@ -1,2 +1,2 @@
-llama_cpp>=0.2.20
-diskcache>=5.0
+llama-cpp-python>=0.2.90
+diskcache>=5.6.3
